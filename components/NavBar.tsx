@@ -1,13 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Search, FileImage, Clock, BookOpen } from "lucide-react";
+import { Search, FileImage, Clock, BookOpen, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 const NAV = [
   { href: "/", label: "특허 검색", icon: Search },
   { href: "/diagram", label: "도면 생성", icon: FileImage },
   { href: "/history", label: "이력", icon: Clock },
+  { href: "/settings", label: "설정", icon: Settings },
 ];
 
 export default function NavBar() {

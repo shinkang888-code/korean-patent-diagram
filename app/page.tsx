@@ -1,12 +1,35 @@
-import { Search, FileImage, Zap, Database, BookOpen } from "lucide-react";
+import { Search, FileImage, Zap, Database, BookOpen, Settings, AlertTriangle } from "lucide-react";
+import Link from "next/link";
 import SearchForm from "@/components/SearchForm";
 import { getRecentSearches } from "@/lib/db";
+import { hasApiKey } from "@/lib/kipris";
 
 export default async function HomePage() {
   const recentSearches = await getRecentSearches(8).catch(() => []);
+  const apiKeyReady = await hasApiKey().catch(() => false);
 
   return (
     <div className="space-y-8">
+      {/* API 키 미설정 배너 */}
+      {!apiKeyReady && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-amber-900 text-sm">KIPRIS API 키가 설정되지 않았습니다</p>
+            <p className="text-amber-700 text-sm mt-0.5">
+              API 키를 입력해야 특허 검색이 가능합니다. 신청 승인 후 아래에서 입력하세요.
+            </p>
+          </div>
+          <Link
+            href="/settings"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 transition-colors shrink-0"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            설정하기
+          </Link>
+        </div>
+      )}
+
       {/* 히어로 섹션 */}
       <section className="text-center py-10">
         <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-sm font-medium mb-4">

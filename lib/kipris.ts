@@ -97,17 +97,48 @@ function parseXml(xmlText: string): XmlNode {
 
 // ── API 헬퍼 ────────────────────────────────────────────────────
 
-function getApiKey(): string {
-  const key = process.env.KIPRIS_API_KEY;
-  if (!key) throw new Error("KIPRIS_API_KEY 환경변수가 설정되지 않았습니다.");
+/**
+ * API 키 우선순위: 쿠키 > 환경변수
+ * 쿠키는 서버 컴포넌트/API Route에서 next/headers로 읽음
+ */
+export async function getApiKey(): Promise<string> {
+  // 1) 환경변수
+  const envKey = process.env.KIPRIS_API_KEY;
+
+  // 2) 쿠키 (Next.js 서버사이드)
+  let cookieKey: string | undefined;
+  try {
+    const { cookies } = await import("next/headers");
+    const store = await cookies();
+    cookieKey = store.get("kipris_api_key")?.value;
+  } catch {
+    // 쿠키 접근 불가 환경 (Edge 등)
+  }
+
+  const key = cookieKey || envKey;
+  if (!key) {
+    throw new Error(
+      "KIPRIS API 키가 설정되지 않았습니다. 설정 페이지(/settings)에서 API 키를 입력하거나 KIPRIS_API_KEY 환경변수를 설정하세요."
+    );
+  }
   return key;
+}
+
+/** API 키 설정 여부 확인 */
+export async function hasApiKey(): Promise<boolean> {
+  try {
+    await getApiKey();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function makeRequest(
   endpoint: string,
   params: Record<string, string>
 ): Promise<XmlNode | null> {
-  const apiKey = getApiKey();
+  const apiKey = await getApiKey();
   const url = new URL(`${KIPRIS_BASE_URL}${endpoint}`);
   Object.entries({ ...params, accessKey: apiKey }).forEach(([k, v]) =>
     url.searchParams.set(k, v)
