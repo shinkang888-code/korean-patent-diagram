@@ -12,6 +12,8 @@ const ENDPOINTS = {
   citingInfo: "/CitingService/citingInfo",
 } as const;
 
+// ── 공개 타입 정의 ──────────────────────────────────────────────
+
 export interface Patent {
   application_number: string;
   application_date: string | null;
@@ -44,44 +46,7 @@ export interface CitingPatent {
   citation_type_name: string | null;
 }
 
-function getApiKey(): string {
-  const key = process.env.KIPRIS_API_KEY;
-  if (!key) {
-    throw new Error("KIPRIS_API_KEY 환경변수가 설정되지 않았습니다.");
-  }
-  return key;
-}
-
-function parsePatentInfo(item: XmlNode, detailed = false): Patent {
-  const getText = (tag: string) =>
-    item.querySelector(tag)?.textContent?.trim() ?? null;
-
-  const patent: Patent = {
-    application_number: getText("ApplicationNumber") ?? "",
-    application_date: getText("ApplicationDate"),
-    title: getText("InventionName"),
-    applicant: getText("Applicant"),
-    registration_status: getText("RegistrationStatus"),
-    opening_number: getText("OpeningNumber"),
-    opening_date: getText("OpeningDate"),
-    registration_number: getText("RegistrationNumber"),
-    registration_date: getText("RegistrationDate"),
-  };
-
-  if (detailed) {
-    patent.abstract = getText("Abstract");
-    patent.ipc_number = getText("InternationalpatentclassificationNumber");
-  }
-
-  return patent;
-}
-
-/**
- * 단순 XML 파서 (외부 DOM 라이브러리 없이 서버사이드 처리)
- */
-function parseXml(xmlText: string): XmlNode {
-  return createXmlNode("root", xmlText);
-}
+// ── 내부 XML 파서 ────────────────────────────────────────────────
 
 interface XmlNode {
   tagName: string;
@@ -91,42 +56,51 @@ interface XmlNode {
   querySelectorAll(selector: string): XmlNode[];
 }
 
-function findFirst(nodes: XmlNode[], selector: string): XmlNode | null {
+function xmlFindFirst(nodes: XmlNode[], tag: string): XmlNode | null {
   for (const node of nodes) {
-    if (node.tagName === selector) return node;
-    const found = findFirst(node.children, selector);
+    if (node.tagName === tag) return node;
+    const found = xmlFindFirst(node.children, tag);
     if (found) return found;
   }
   return null;
 }
 
-function findAll(nodes: XmlNode[], selector: string): XmlNode[] {
+function xmlFindAll(nodes: XmlNode[], tag: string): XmlNode[] {
   const results: XmlNode[] = [];
   for (const node of nodes) {
-    if (node.tagName === selector) results.push(node);
-    results.push(...findAll(node.children, selector));
+    if (node.tagName === tag) results.push(node);
+    results.push(...xmlFindAll(node.children, tag));
   }
   return results;
 }
 
-function createXmlNode(tagName: string, content: string): XmlNode {
+function buildXmlNode(tagName: string, content: string): XmlNode {
   const children: XmlNode[] = [];
-
   const tagRegex = /<([a-zA-Z][a-zA-Z0-9_]*)(?:\s[^>]*)?>([^]*?)<\/\1>/g;
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = tagRegex.exec(content)) !== null) {
-    children.push(createXmlNode(match[1], match[2]));
+    children.push(buildXmlNode(match[1], match[2]));
   }
-
   const textContent = content.replace(/<[^>]+>/g, "").trim();
-
   return {
     tagName,
     textContent,
     children,
-    querySelector: (selector: string) => findFirst(children, selector),
-    querySelectorAll: (selector: string) => findAll(children, selector),
+    querySelector: (tag: string) => xmlFindFirst(children, tag),
+    querySelectorAll: (tag: string) => xmlFindAll(children, tag),
   };
+}
+
+function parseXml(xmlText: string): XmlNode {
+  return buildXmlNode("root", xmlText);
+}
+
+// ── API 헬퍼 ────────────────────────────────────────────────────
+
+function getApiKey(): string {
+  const key = process.env.KIPRIS_API_KEY;
+  if (!key) throw new Error("KIPRIS_API_KEY 환경변수가 설정되지 않았습니다.");
+  return key;
 }
 
 async function makeRequest(
@@ -135,22 +109,44 @@ async function makeRequest(
 ): Promise<XmlNode | null> {
   const apiKey = getApiKey();
   const url = new URL(`${KIPRIS_BASE_URL}${endpoint}`);
+  Object.entries({ ...params, accessKey: apiKey }).forEach(([k, v]) =>
+    url.searchParams.set(k, v)
+  );
 
-  Object.entries({ ...params, accessKey: apiKey }).forEach(([k, v]) => {
-    url.searchParams.set(k, v);
-  });
-
-  const res = await fetch(url.toString(), {
-    next: { revalidate: 300 },
-  });
-
-  if (!res.ok) {
-    throw new Error(`KIPRIS API 오류: ${res.status} ${res.statusText}`);
-  }
+  const res = await fetch(url.toString(), { next: { revalidate: 300 } });
+  if (!res.ok) throw new Error(`KIPRIS API 오류: ${res.status}`);
 
   const text = await res.text();
   return parseXml(text);
 }
+
+// ── 파싱 헬퍼 ───────────────────────────────────────────────────
+
+function parsePatentInfo(item: XmlNode, detailed = false): Patent {
+  const get = (tag: string): string | null =>
+    item.querySelector(tag)?.textContent?.trim() ?? null;
+
+  const patent: Patent = {
+    application_number: get("ApplicationNumber") ?? "",
+    application_date: get("ApplicationDate"),
+    title: get("InventionName"),
+    applicant: get("Applicant"),
+    registration_status: get("RegistrationStatus"),
+    opening_number: get("OpeningNumber"),
+    opening_date: get("OpeningDate"),
+    registration_number: get("RegistrationNumber"),
+    registration_date: get("RegistrationDate"),
+  };
+
+  if (detailed) {
+    patent.abstract = get("Abstract");
+    patent.ipc_number = get("InternationalpatentclassificationNumber");
+  }
+
+  return patent;
+}
+
+// ── 공개 API ────────────────────────────────────────────────────
 
 export async function searchPatentsByApplicant(
   applicantName: string,
@@ -191,17 +187,14 @@ export async function getPatentDetail(
   applicationNumber: string
 ): Promise<Patent | null> {
   const cleanNum = applicationNumber.replace(/-/g, "");
-
   const root = await makeRequest(ENDPOINTS.applicationSearch, {
     applicationNumber: cleanNum,
     docsStart: "1",
   });
 
   if (!root) return null;
-
   const item = root.querySelector("PatentUtilityInfo");
   if (!item) return null;
-
   return parsePatentInfo(item, true);
 }
 
@@ -209,24 +202,22 @@ export async function getCitingPatents(
   applicationNumber: string
 ): Promise<CitingPatent[]> {
   const cleanNum = applicationNumber.replace(/-/g, "");
-
   const root = await makeRequest(ENDPOINTS.citingInfo, {
     standardCitationApplicationNumber: cleanNum,
   });
 
   if (!root) return [];
 
-  const items = root.querySelectorAll("citingInfo");
-  return items.map((item) => {
-    const getText = (tag: string) =>
+  return root.querySelectorAll("citingInfo").map((item) => {
+    const get = (tag: string): string | null =>
       item.querySelector(tag)?.textContent?.trim() ?? null;
     return {
-      citing_application_number: getText("ApplicationNumber"),
-      standard_citation_number: getText("StandardCitationApplicationNumber"),
-      status_code: getText("StandardStatusCode"),
-      status_name: getText("StandardStatusCodeName"),
-      citation_type_code: getText("CitationLiteratureTypeCode"),
-      citation_type_name: getText("CitationLiteratureTypeCodeName"),
+      citing_application_number: get("ApplicationNumber"),
+      standard_citation_number: get("StandardCitationApplicationNumber"),
+      status_code: get("StandardStatusCode"),
+      status_name: get("StandardStatusCodeName"),
+      citation_type_code: get("CitationLiteratureTypeCode"),
+      citation_type_name: get("CitationLiteratureTypeCodeName"),
     };
   });
 }

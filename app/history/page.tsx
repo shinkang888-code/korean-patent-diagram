@@ -1,16 +1,6 @@
 import { Search, FileImage } from "lucide-react";
 import Link from "next/link";
-
-async function fetchHistory() {
-  try {
-    const base = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
-    const res = await fetch(`${base}/api/history`, { cache: "no-store" });
-    if (!res.ok) return { diagrams: [], searches: [] };
-    return res.json();
-  } catch {
-    return { diagrams: [], searches: [] };
-  }
-}
+import { getRecentDiagrams, getRecentSearches } from "@/lib/db";
 
 const DIAGRAM_LABELS: Record<string, string> = {
   flowchart: "플로우차트",
@@ -21,13 +11,15 @@ const DIAGRAM_LABELS: Record<string, string> = {
 };
 
 export default async function HistoryPage() {
-  const { diagrams, searches } = await fetchHistory();
+  const [diagrams, searches] = await Promise.all([
+    getRecentDiagrams(20).catch(() => []),
+    getRecentSearches(10).catch(() => []),
+  ]);
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-900">이력</h1>
 
-      {/* 검색 이력 */}
       <section className="card p-5">
         <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
           <Search className="w-4 h-4 text-slate-500" />
@@ -37,7 +29,7 @@ export default async function HistoryPage() {
           <p className="text-sm text-slate-500">검색 이력이 없습니다.</p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {searches.map((s: { query: string; result_count: number; created_at: string }) => (
+            {(searches as Array<{ query: string; result_count: number }>).map((s) => (
               <Link
                 key={s.query}
                 href={`/search?q=${encodeURIComponent(s.query)}`}
@@ -52,7 +44,6 @@ export default async function HistoryPage() {
         )}
       </section>
 
-      {/* 도면 이력 */}
       <section className="card p-5">
         <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
           <FileImage className="w-4 h-4 text-slate-500" />
@@ -62,54 +53,54 @@ export default async function HistoryPage() {
           <div className="text-center py-8 text-slate-500">
             <FileImage className="w-8 h-8 mx-auto mb-2 opacity-30" />
             <p className="text-sm">생성된 도면이 없습니다.</p>
-            <Link href="/diagram" className="btn-primary mt-3 text-xs">
+            <Link href="/diagram" className="btn-primary mt-3 text-xs inline-flex">
               도면 생성하기
             </Link>
           </div>
         ) : (
           <div className="space-y-2">
-            {diagrams.map(
-              (d: {
+            {(
+              diagrams as Array<{
                 id: number;
                 diagram_type: string;
                 application_number: string | null;
                 filing_type: string;
                 content_preview: string | null;
                 created_at: string;
-              }) => (
-                <div
-                  key={d.id}
-                  className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="badge-blue">
-                      {DIAGRAM_LABELS[d.diagram_type] ?? d.diagram_type}
-                    </span>
-                    <div>
-                      {d.application_number && (
-                        <Link
-                          href={`/patent/${d.application_number}`}
-                          className="text-xs text-blue-600 hover:underline"
-                        >
-                          {d.application_number}
-                        </Link>
-                      )}
-                      {d.content_preview && (
-                        <p className="text-xs text-slate-500 truncate max-w-xs">
-                          {d.content_preview}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="badge-gray">{d.filing_type === "K" ? "국내" : "PCT"}</span>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {new Date(d.created_at).toLocaleDateString("ko-KR")}
-                    </p>
+              }>
+            ).map((d) => (
+              <div
+                key={d.id}
+                className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="badge-blue">
+                    {DIAGRAM_LABELS[d.diagram_type] ?? d.diagram_type}
+                  </span>
+                  <div>
+                    {d.application_number && (
+                      <Link
+                        href={`/patent/${d.application_number}`}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        {d.application_number}
+                      </Link>
+                    )}
+                    {d.content_preview && (
+                      <p className="text-xs text-slate-500 truncate max-w-xs">
+                        {d.content_preview}
+                      </p>
+                    )}
                   </div>
                 </div>
-              )
-            )}
+                <div className="text-right">
+                  <span className="badge-gray">{d.filing_type === "K" ? "국내" : "PCT"}</span>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {new Date(d.created_at).toLocaleDateString("ko-KR")}
+                  </p>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>

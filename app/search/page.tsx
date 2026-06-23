@@ -3,39 +3,28 @@ import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import SearchForm from "@/components/SearchForm";
 import PatentStatusBadge from "@/components/PatentStatusBadge";
-import type { SearchResult } from "@/lib/kipris";
+import { searchPatentsByApplicant, type SearchResult } from "@/lib/kipris";
+import { logSearch } from "@/lib/db";
 
 interface PageProps {
   searchParams: Promise<{ q?: string; page?: string; status?: string }>;
 }
 
 async function SearchResults({ q, page, status }: { q: string; page: number; status: string }) {
-  const url = new URL(
-    `${process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000"}/api/patents/search`
-  );
-  url.searchParams.set("q", q);
-  url.searchParams.set("page", String(page));
-  url.searchParams.set("status", status);
-
   let result: SearchResult | null = null;
-  let error: string | null = null;
+  let errorMsg: string | null = null;
 
   try {
-    const res = await fetch(url.toString(), { cache: "no-store" });
-    if (!res.ok) {
-      const data = await res.json();
-      error = data.error ?? "검색 실패";
-    } else {
-      result = await res.json();
-    }
-  } catch {
-    error = "네트워크 오류가 발생했습니다.";
+    result = await searchPatentsByApplicant(q, page, 20, status);
+    await logSearch(q, result.total_count).catch(() => {});
+  } catch (err) {
+    errorMsg = err instanceof Error ? err.message : "검색 실패";
   }
 
-  if (error) {
+  if (errorMsg) {
     return (
       <div className="card p-6 text-center">
-        <p className="text-red-600 font-medium">{error}</p>
+        <p className="text-red-600 font-medium">{errorMsg}</p>
         <p className="text-sm text-slate-500 mt-2">
           KIPRIS_API_KEY 환경변수가 설정됐는지 확인하세요.
         </p>
@@ -88,7 +77,6 @@ async function SearchResults({ q, page, status }: { q: string; page: number; sta
         </Link>
       ))}
 
-      {/* 페이지네이션 */}
       <div className="flex items-center justify-center gap-2 pt-4">
         {page > 1 && (
           <Link
@@ -128,7 +116,6 @@ export default async function SearchPage({ searchParams }: PageProps) {
 
       {q ? (
         <>
-          {/* 필터 */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-600">상태 필터:</span>
             {[

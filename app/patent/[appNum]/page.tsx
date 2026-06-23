@@ -1,38 +1,26 @@
 import { ArrowLeft, ExternalLink, FileImage } from "lucide-react";
 import Link from "next/link";
 import PatentStatusBadge from "@/components/PatentStatusBadge";
-import type { Patent, CitingPatent } from "@/lib/kipris";
+import { getPatentDetail, getCitingPatents, type Patent, type CitingPatent } from "@/lib/kipris";
 
 interface PageProps {
   params: Promise<{ appNum: string }>;
 }
 
-async function fetchPatent(appNum: string): Promise<Patent | null> {
-  try {
-    const base = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
-    const res = await fetch(`${base}/api/patents/detail?appNum=${appNum}`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function fetchCiting(appNum: string): Promise<CitingPatent[]> {
-  try {
-    const base = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
-    const res = await fetch(`${base}/api/patents/citing?appNum=${appNum}`, { cache: "no-store" });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.citing_patents ?? [];
-  } catch {
-    return [];
-  }
-}
-
 export default async function PatentDetailPage({ params }: PageProps) {
   const { appNum } = await params;
-  const [patent, citing] = await Promise.all([fetchPatent(appNum), fetchCiting(appNum)]);
+
+  let patent: Patent | null = null;
+  let citing: CitingPatent[] = [];
+
+  try {
+    [patent, citing] = await Promise.all([
+      getPatentDetail(appNum).catch(() => null),
+      getCitingPatents(appNum).catch(() => []),
+    ]);
+  } catch {
+    // 무시
+  }
 
   if (!patent) {
     return (
@@ -43,12 +31,15 @@ export default async function PatentDetailPage({ params }: PageProps) {
         </Link>
         <div className="card p-8 text-center text-slate-500">
           특허 정보를 불러올 수 없습니다.
+          <p className="text-xs mt-2 text-slate-400">
+            출원번호: {appNum} / KIPRIS_API_KEY 환경변수를 확인하세요.
+          </p>
         </div>
       </div>
     );
   }
 
-  const infoRows = [
+  const infoRows: [string, string | null | undefined][] = [
     ["출원번호", patent.application_number],
     ["출원일", patent.application_date],
     ["출원인", patent.applicant],
@@ -57,11 +48,10 @@ export default async function PatentDetailPage({ params }: PageProps) {
     ["공개번호", patent.opening_number],
     ["공개일", patent.opening_date],
     ["IPC 분류", patent.ipc_number],
-  ].filter(([, v]) => v);
+  ];
 
   return (
     <div className="space-y-6">
-      {/* 헤더 */}
       <div className="flex items-center gap-3">
         <Link href="/search" className="btn-secondary">
           <ArrowLeft className="w-4 h-4" />
@@ -69,7 +59,6 @@ export default async function PatentDetailPage({ params }: PageProps) {
         </Link>
       </div>
 
-      {/* 특허 기본 정보 */}
       <div className="card p-6">
         <div className="flex items-start justify-between gap-4 mb-4">
           <h1 className="text-xl font-bold text-slate-900 leading-snug">
@@ -79,16 +68,17 @@ export default async function PatentDetailPage({ params }: PageProps) {
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {infoRows.map(([label, value]) => (
-            <div key={label}>
-              <dt className="text-xs text-slate-500 font-medium">{label}</dt>
-              <dd className="text-sm text-slate-900 mt-0.5">{value ?? "-"}</dd>
-            </div>
-          ))}
+          {infoRows
+            .filter(([, v]) => v)
+            .map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-xs text-slate-500 font-medium">{label}</dt>
+                <dd className="text-sm text-slate-900 mt-0.5">{value ?? "-"}</dd>
+              </div>
+            ))}
         </div>
       </div>
 
-      {/* 초록 */}
       {patent.abstract && (
         <div className="card p-6">
           <h2 className="font-semibold text-slate-900 mb-3">초록</h2>
@@ -96,7 +86,6 @@ export default async function PatentDetailPage({ params }: PageProps) {
         </div>
       )}
 
-      {/* 도면 생성 버튼 */}
       <div className="card p-5 bg-blue-50 border-blue-200">
         <div className="flex items-center justify-between">
           <div>
@@ -117,7 +106,6 @@ export default async function PatentDetailPage({ params }: PageProps) {
         </div>
       </div>
 
-      {/* 인용 특허 */}
       <div className="card p-5">
         <h2 className="font-semibold text-slate-900 mb-4">
           인용 특허{" "}
