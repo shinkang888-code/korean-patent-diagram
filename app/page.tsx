@@ -66,7 +66,7 @@ export default async function HomePage() {
             최근 검색
           </h2>
           <div className="flex flex-wrap gap-2">
-            {recentSearches.map((s: { query: string; result_count: number }) => (
+            {(recentSearches as Array<{ query: string; result_count: number }>).map((s) => (
               <a
                 key={s.query}
                 href={`/search?q=${encodeURIComponent(s.query)}`}
