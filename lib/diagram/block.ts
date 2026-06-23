@@ -57,7 +57,6 @@ export function generateBlockSVG(
     const x2 = to.x - bw / 2;
     const y2 = to.y;
 
-    const markStart = edge.bidir ? "url(#arrowBack)" : "";
     svgBody += `
       <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
             stroke="black" stroke-width="${LINE_W.outer}"
@@ -75,7 +74,6 @@ export function generateBlockSVG(
     const pos = positions[node.id];
     if (!pos) continue;
     const { x, y } = pos;
-    const stroke = node.dashed ? "4,4" : "none";
 
     svgBody += `
       <rect x="${x - bw / 2}" y="${y - bh / 2}" width="${bw}" height="${bh}" rx="4"

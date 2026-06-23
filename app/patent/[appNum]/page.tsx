@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, FileImage, Copy } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileImage } from "lucide-react";
 import Link from "next/link";
 import PatentStatusBadge from "@/components/PatentStatusBadge";
 import type { Patent, CitingPatent } from "@/lib/kipris";

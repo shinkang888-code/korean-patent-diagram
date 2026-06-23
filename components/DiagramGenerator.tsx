@@ -4,8 +4,6 @@ import {
   FileImage,
   Download,
   Save,
-  RotateCcw,
-  ChevronDown,
   Loader2,
   CheckCircle,
 } from "lucide-react";

@@ -1,4 +1,4 @@
-import { Clock, Search, FileImage } from "lucide-react";
+import { Search, FileImage } from "lucide-react";
 import Link from "next/link";
 
 async function fetchHistory() {

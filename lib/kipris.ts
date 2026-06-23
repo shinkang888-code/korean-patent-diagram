@@ -80,8 +80,7 @@ function parsePatentInfo(item: XmlNode, detailed = false): Patent {
  * 단순 XML 파서 (외부 DOM 라이브러리 없이 서버사이드 처리)
  */
 function parseXml(xmlText: string): XmlNode {
-  // 재귀 파서 대신 정규식 기반 단순 파서
-  return new SimpleXmlParser(xmlText).parse();
+  return createXmlNode("root", xmlText);
 }
 
 interface XmlNode {
@@ -92,63 +91,42 @@ interface XmlNode {
   querySelectorAll(selector: string): XmlNode[];
 }
 
-class SimpleXmlParser {
-  private text: string;
+function findFirst(nodes: XmlNode[], selector: string): XmlNode | null {
+  for (const node of nodes) {
+    if (node.tagName === selector) return node;
+    const found = findFirst(node.children, selector);
+    if (found) return found;
+  }
+  return null;
+}
 
-  constructor(text: string) {
-    this.text = text;
+function findAll(nodes: XmlNode[], selector: string): XmlNode[] {
+  const results: XmlNode[] = [];
+  for (const node of nodes) {
+    if (node.tagName === selector) results.push(node);
+    results.push(...findAll(node.children, selector));
+  }
+  return results;
+}
+
+function createXmlNode(tagName: string, content: string): XmlNode {
+  const children: XmlNode[] = [];
+
+  const tagRegex = /<([a-zA-Z][a-zA-Z0-9_]*)(?:\s[^>]*)?>([^]*?)<\/\1>/g;
+  let match;
+  while ((match = tagRegex.exec(content)) !== null) {
+    children.push(createXmlNode(match[1], match[2]));
   }
 
-  parse(): XmlNode {
-    return this.createNode("root", this.text);
-  }
+  const textContent = content.replace(/<[^>]+>/g, "").trim();
 
-  private createNode(tagName: string, content: string): XmlNode {
-    const self = this;
-    const children: XmlNode[] = [];
-
-    // 자식 태그 파싱
-    const tagRegex = /<([a-zA-Z][a-zA-Z0-9_]*)(?:\s[^>]*)?>([^]*?)<\/\1>/g;
-    let match;
-    while ((match = tagRegex.exec(content)) !== null) {
-      children.push(this.createNode(match[1], match[2]));
-    }
-
-    // 텍스트 내용 (태그 제거)
-    const textContent = content.replace(/<[^>]+>/g, "").trim();
-
-    const node: XmlNode = {
-      tagName,
-      textContent,
-      children,
-      querySelector(selector: string): XmlNode | null {
-        return self.findFirst(children, selector);
-      },
-      querySelectorAll(selector: string): XmlNode[] {
-        return self.findAll(children, selector);
-      },
-    };
-
-    return node;
-  }
-
-  private findFirst(nodes: XmlNode[], selector: string): XmlNode | null {
-    for (const node of nodes) {
-      if (node.tagName === selector) return node;
-      const found = this.findFirst(node.children, selector);
-      if (found) return found;
-    }
-    return null;
-  }
-
-  private findAll(nodes: XmlNode[], selector: string): XmlNode[] {
-    const results: XmlNode[] = [];
-    for (const node of nodes) {
-      if (node.tagName === selector) results.push(node);
-      results.push(...this.findAll(node.children, selector));
-    }
-    return results;
-  }
+  return {
+    tagName,
+    textContent,
+    children,
+    querySelector: (selector: string) => findFirst(children, selector),
+    querySelectorAll: (selector: string) => findAll(children, selector),
+  };
 }
 
 async function makeRequest(

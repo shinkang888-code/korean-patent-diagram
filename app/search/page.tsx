@@ -47,7 +47,7 @@ async function SearchResults({ q, page, status }: { q: string; page: number; sta
     return (
       <div className="card p-8 text-center text-slate-500">
         <Search className="w-8 h-8 mx-auto mb-2 opacity-40" />
-        <p>"{q}"에 대한 검색 결과가 없습니다.</p>
+        <p>&ldquo;{q}&rdquo;에 대한 검색 결과가 없습니다.</p>
       </div>
     );
   }
