@@ -45,51 +45,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "마지막 메시지는 사용자 메시지여야 합니다." }, { status: 400 });
     }
 
+    // @google/generative-ai SDK 사용
+    const { GoogleGenerativeAI } = await import("@google/generative-ai");
+    const genAI = new GoogleGenerativeAI(geminiKey);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      systemInstruction: SYSTEM_PROMPT,
+    });
+
+    // 대화 이력 구성
     const history = messages.slice(0, -1).map((m) => ({
-      role: m.role === "user" ? "user" : "model",
+      role: m.role === "user" ? "user" as const : "model" as const,
       parts: [{ text: m.content }],
     }));
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
-
-    const requestBody = {
-      systemInstruction: {
-        parts: [{ text: SYSTEM_PROMPT }],
-      },
-      contents: [
-        ...history,
-        {
-          role: "user",
-          parts: [{ text: lastUserMessage.content }],
-        },
-      ],
+    const chat = model.startChat({
+      history,
       generationConfig: {
         temperature: 0.7,
         maxOutputTokens: 8192,
       },
-    };
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
     });
 
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      const errMsg =
-        (errData as { error?: { message?: string } }).error?.message ??
-        `Gemini API 오류 (${response.status})`;
-      return NextResponse.json({ error: errMsg }, { status: response.status });
-    }
-
-    const data = await response.json();
-    const text: string =
-      (data as {
-        candidates?: Array<{
-          content?: { parts?: Array<{ text?: string }> };
-        }>;
-      }).candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const result = await chat.sendMessage(lastUserMessage.content);
+    const text = result.response.text();
 
     if (!text.trim()) {
       return NextResponse.json({ error: "AI가 빈 응답을 반환했습니다." }, { status: 500 });
@@ -98,6 +77,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ text });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "서버 오류";
+    console.error("[Chat API Error]", err);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
