@@ -2,23 +2,15 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
-  Send,
-  Loader2,
-  Bot,
-  User,
-  FileText,
-  Copy,
-  Check,
-  Download,
-  ChevronDown,
-  FileDown,
-  Trash2,
-  RotateCcw,
-  Maximize2,
-  Minimize2,
+  Send, Loader2, Bot, User, FileText, Copy, Check, Download,
+  ChevronDown, Trash2, RotateCcw, Maximize2, Minimize2,
+  Bold, Italic, Underline, Strikethrough,
+  AlignLeft, AlignCenter, AlignRight, AlignJustify,
+  List, ListOrdered, Minus, Type,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
+/* ─── 타입 ─── */
 interface Message {
   id: string;
   role: "user" | "assistant";
@@ -26,6 +18,26 @@ interface Message {
   createdAt: Date;
 }
 
+type DownloadFormat = "docx" | "hwpx" | "html" | "md" | "txt";
+
+const FORMAT_LABELS: Record<DownloadFormat, { label: string; sub: string; color: string }> = {
+  docx: { label: "Word (.docx)", sub: "Microsoft Word 형식", color: "text-blue-400" },
+  hwpx: { label: "한글 (.hwpx)", sub: "한컴 한글 형식", color: "text-teal-400" },
+  html: { label: "HTML (.html)", sub: "웹 브라우저 형식", color: "text-orange-400" },
+  md:   { label: "Markdown (.md)", sub: "마크다운 텍스트", color: "text-purple-400" },
+  txt:  { label: "텍스트 (.txt)", sub: "순수 텍스트", color: "text-white/60" },
+};
+
+/* ─── 단락 스타일 ─── */
+const PARA_STYLES = [
+  { tag: "p",  label: "본문",      class: "" },
+  { tag: "h1", label: "특허명칭",  class: "font-bold text-xl" },
+  { tag: "h2", label: "발명의 설명", class: "font-bold text-lg" },
+  { tag: "h3", label: "청구항",    class: "font-semibold text-base" },
+  { tag: "h4", label: "요약",      class: "font-semibold" },
+];
+
+/* ─── 예시 프롬프트 ─── */
 const EXAMPLE_PROMPTS = [
   "스마트폰 카메라로 문서를 자동 스캔하고 OCR 처리하는 방법의 특허 명세서를 작성해줘",
   "AI 기반 실시간 번역 이어폰 시스템의 특허 청구항을 작성해줘",
@@ -33,6 +45,57 @@ const EXAMPLE_PROMPTS = [
   "블록체인을 이용한 디지털 저작권 관리 시스템 특허를 작성해줘",
 ];
 
+/* ─── Markdown → HTML 변환 ─── */
+function markdownToEditorHtml(md: string): string {
+  return md
+    .replace(/^#### (.+)$/gm, "<h4>$1</h4>")
+    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/^---$/gm, "<hr>")
+    .replace(/^- (.+)$/gm, "<li>$1</li>")
+    .replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`)
+    .replace(/^(\d+)\. (.+)$/gm, "<li data-ol='1'>$2</li>")
+    .replace(/(<li data-ol='1'>.*<\/li>\n?)+/g, (m) => `<ol>${m.replace(/ data-ol='1'/g, "")}</ol>`)
+    .split("\n\n")
+    .map((block) =>
+      block.startsWith("<h") || block.startsWith("<ul") || block.startsWith("<ol") || block.startsWith("<hr")
+        ? block
+        : `<p>${block.replace(/\n/g, "<br>")}</p>`
+    )
+    .join("\n");
+}
+
+/* ─── 툴바 버튼 컴포넌트 ─── */
+function ToolbarBtn({
+  icon: Icon, label, cmd, value, active = false, disabled = false
+}: {
+  icon?: React.ElementType; label: string; cmd: string; value?: string;
+  active?: boolean; disabled?: boolean;
+}) {
+  const exec = () => { if (!disabled) document.execCommand(cmd, false, value); };
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => { e.preventDefault(); exec(); }}
+      title={label}
+      disabled={disabled}
+      className={cn(
+        "flex items-center justify-center w-7 h-7 rounded-md text-xs font-medium transition-all",
+        active
+          ? "bg-teal-500/30 text-teal-300 border border-teal-500/40"
+          : "text-white/50 hover:text-white/90 hover:bg-white/10",
+        disabled && "opacity-30 cursor-not-allowed"
+      )}
+    >
+      {Icon ? <Icon className="w-3.5 h-3.5" /> : label}
+    </button>
+  );
+}
+
+/* ─── 메인 컴포넌트 ─── */
 interface PatentWriterProps {
   geminiApiKey?: string;
 }
@@ -41,20 +104,27 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [editorContent, setEditorContent] = useState("");
   const [copied, setCopied] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
-  const [downloading, setDownloading] = useState<"docx" | "hwpx" | null>(null);
+  const [downloading, setDownloading] = useState<DownloadFormat | null>(null);
   const [leftExpanded, setLeftExpanded] = useState(false);
   const [rightExpanded, setRightExpanded] = useState(false);
+  const [wordCount, setWordCount] = useState(0);
+  const [charCount, setCharCount] = useState(0);
+  const [lineCount, setLineCount] = useState(0);
+  const [paraStyle, setParaStyle] = useState("p");
+  const [fontSize, setFontSize] = useState("3");
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
 
+  /* 스크롤 */
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  /* 다운로드 메뉴 외부 클릭 닫기 */
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (downloadMenuRef.current && !downloadMenuRef.current.contains(e.target as Node)) {
@@ -65,174 +135,190 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const sendMessage = useCallback(
-    async (userInput: string) => {
-      const trimmed = userInput.trim();
-      if (!trimmed || loading) return;
+  /* 글자 수 업데이트 */
+  const updateStats = useCallback(() => {
+    if (!editorRef.current) return;
+    const text = editorRef.current.innerText ?? "";
+    setCharCount(text.length);
+    setWordCount(text.split(/\s+/).filter(Boolean).length);
+    setLineCount(text.split("\n").length);
+  }, []);
 
-      const userMsg: Message = {
-        id: Date.now().toString(),
-        role: "user",
-        content: trimmed,
+  /* AI 메시지 전송 */
+  const sendMessage = useCallback(async (userInput: string) => {
+    const trimmed = userInput.trim();
+    if (!trimmed || loading) return;
+
+    const userMsg: Message = { id: Date.now().toString(), role: "user", content: trimmed, createdAt: new Date() };
+    setMessages((prev) => [...prev, userMsg]);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
+          apiKey: geminiApiKey,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "응답 오류");
+
+      const assistantMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: (data as { text: string }).text,
         createdAt: new Date(),
       };
+      setMessages((prev) => [...prev, assistantMsg]);
 
-      setMessages((prev) => [...prev, userMsg]);
-      setInput("");
-      setLoading(true);
-
-      try {
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: [...messages, userMsg].map((m) => ({
-              role: m.role,
-              content: m.content,
-            })),
-            apiKey: geminiApiKey,
-          }),
-        });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error((data as { error?: string }).error ?? "응답 오류");
-        }
-
-        const assistantMsg: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: (data as { text: string }).text,
-          createdAt: new Date(),
-        };
-
-        setMessages((prev) => [...prev, assistantMsg]);
-        setEditorContent((data as { text: string }).text);
-      } catch (err) {
-        const errMsg: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: `오류가 발생했습니다: ${err instanceof Error ? err.message : "알 수 없는 오류"}`,
-          createdAt: new Date(),
-        };
-        setMessages((prev) => [...prev, errMsg]);
-      } finally {
-        setLoading(false);
+      /* 에디터에 HTML 삽입 */
+      if (editorRef.current) {
+        editorRef.current.innerHTML = markdownToEditorHtml((data as { text: string }).text);
+        updateStats();
       }
-    },
-    [messages, loading, geminiApiKey]
-  );
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void sendMessage(input);
+    } catch (err) {
+      setMessages((prev) => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: `오류가 발생했습니다: ${err instanceof Error ? err.message : "알 수 없는 오류"}`,
+        createdAt: new Date(),
+      }]);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [messages, loading, geminiApiKey, updateStats]);
 
+  /* 에디터 내용 가져오기 (HTML) */
+  const getEditorContent = useCallback(() => editorRef.current?.innerHTML ?? "", []);
+
+  /* 복사 */
   const handleCopy = async () => {
-    if (!editorContent.trim()) return;
-    await navigator.clipboard.writeText(editorContent);
+    const text = editorRef.current?.innerText ?? "";
+    if (!text.trim()) return;
+    await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownloadDocx = async () => {
-    if (!editorContent.trim()) return;
-    setDownloading("docx");
+  /* 다운로드 */
+  const handleDownload = async (format: DownloadFormat) => {
+    const content = getEditorContent();
+    if (!content.trim()) return;
+    setDownloading(format);
     setDownloadMenuOpen(false);
+
     try {
-      const { downloadAsDocx } = await import("@/lib/exportDoc");
-      await downloadAsDocx(editorContent, "특허명세서");
+      if (format === "docx") {
+        const { downloadAsDocx } = await import("@/lib/exportDoc");
+        await downloadAsDocx(content, "특허명세서");
+      } else if (format === "hwpx") {
+        const { downloadAsHwpx } = await import("@/lib/exportDoc");
+        await downloadAsHwpx(content, "특허명세서");
+      } else if (format === "html") {
+        const { downloadAsHtml } = await import("@/lib/exportDoc");
+        downloadAsHtml(content, "특허명세서");
+      } else if (format === "md") {
+        const { downloadAsMarkdown } = await import("@/lib/exportDoc");
+        downloadAsMarkdown(content, "특허명세서");
+      } else if (format === "txt") {
+        const { downloadAsTxt } = await import("@/lib/exportDoc");
+        downloadAsTxt(content, "특허명세서");
+      }
     } finally {
       setDownloading(null);
     }
   };
 
-  const handleDownloadHwpx = async () => {
-    if (!editorContent.trim()) return;
-    setDownloading("hwpx");
-    setDownloadMenuOpen(false);
-    try {
-      const { downloadAsHwpx } = await import("@/lib/exportDoc");
-      await downloadAsHwpx(editorContent, "특허명세서");
-    } finally {
-      setDownloading(null);
-    }
+  /* 단락 스타일 적용 */
+  const applyParaStyle = (tag: string) => {
+    setParaStyle(tag);
+    document.execCommand("formatBlock", false, tag);
+    editorRef.current?.focus();
   };
 
-  const clearChat = () => {
-    setMessages([]);
-    setInput("");
-  };
-
+  /* 마지막 AI 응답 가져오기 */
   const useLastResponse = () => {
-    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-    if (lastAssistant) setEditorContent(lastAssistant.content);
+    const last = [...messages].reverse().find((m) => m.role === "assistant");
+    if (last && editorRef.current) {
+      editorRef.current.innerHTML = markdownToEditorHtml(last.content);
+      updateStats();
+    }
   };
 
   const formatTime = (date: Date) =>
     date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
 
+  const hasContent = charCount > 0;
+
   return (
-    <div className="flex h-full min-h-[600px] border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-      {/* ===== 왼쪽: Gemini 대화창 ===== */}
+    <div
+      className={cn(
+        "flex border border-white/10 rounded-2xl overflow-hidden bg-[#0F172A]",
+        "h-full min-h-[600px]"
+      )}
+      style={{ flexDirection: "row" }}
+    >
+
+      {/* ════════════════════════════════════════
+          왼쪽: Gemini 대화창
+      ════════════════════════════════════════ */}
       {!rightExpanded && (
         <div
           className={cn(
-            "flex flex-col min-h-0 bg-white transition-all",
-            leftExpanded ? "w-full" : "w-1/2 border-r border-slate-200"
+            "flex flex-col min-h-0 border-r border-white/10 transition-all",
+            leftExpanded ? "w-full" : "w-[46%]"
           )}
         >
           {/* 채팅 헤더 */}
-          <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+          <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-white/8 bg-white/3">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center">
+              <div className="w-7 h-7 rounded-full bg-teal-500 flex items-center justify-center">
                 <Bot className="w-4 h-4 text-white" />
               </div>
               <div>
-                <p className="text-sm font-bold text-slate-800">Gemini 특허 AI</p>
-                <p className="text-xs text-slate-500">특허 명세서 작성 전문 AI</p>
+                <p className="text-sm font-bold text-white/90">Gemini 특허 AI</p>
+                <p className="text-xs text-white/40">특허 명세서 작성 전문 AI</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
               {messages.length > 0 && (
-                <button
-                  onClick={clearChat}
-                  className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors text-slate-400 hover:text-slate-600"
-                  title="대화 초기화"
-                >
-                  <Trash2 className="w-4 h-4" />
+                <button onClick={() => setMessages([])}
+                  className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/70 transition-all"
+                  title="대화 초기화">
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
               <button
                 onClick={() => { setLeftExpanded(!leftExpanded); setRightExpanded(false); }}
-                className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors text-slate-400 hover:text-slate-600"
-                title={leftExpanded ? "패널 축소" : "패널 확장"}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/70 transition-all"
               >
-                {leftExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                {leftExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
 
-          {/* 채팅 메시지 */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/40">
+          {/* 메시지 영역 */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#0A0F1E]/40">
             {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full py-8 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center mb-4">
-                  <Bot className="w-7 h-7 text-blue-600" />
+              <div className="flex flex-col items-center justify-center h-full py-6 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-teal-500/15 border border-teal-500/20 flex items-center justify-center mb-4">
+                  <Bot className="w-7 h-7 text-teal-400" />
                 </div>
-                <h3 className="font-semibold text-slate-800 mb-2">특허 명세서 작성 AI</h3>
-                <p className="text-sm text-slate-500 max-w-xs mb-6 leading-relaxed">
+                <h3 className="font-semibold text-white/80 mb-2">특허 명세서 작성 AI</h3>
+                <p className="text-xs text-white/40 max-w-xs mb-5 leading-relaxed">
                   발명 아이디어를 입력하면 특허 명세서, 청구항, 기술적 구성을 전문가 수준으로 작성해드립니다.
                 </p>
-                <div className="w-full space-y-2">
-                  <p className="text-xs font-medium text-slate-400 mb-2">예시 질문</p>
+                <div className="w-full space-y-1.5">
+                  <p className="text-xs text-white/25 mb-2">예시 질문</p>
                   {EXAMPLE_PROMPTS.map((prompt, i) => (
                     <button
                       key={i}
                       onClick={() => void sendMessage(prompt)}
-                      className="w-full text-left px-3 py-2.5 text-xs text-slate-600 bg-white border border-slate-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-colors leading-relaxed"
+                      className="w-full text-left px-3 py-2 text-xs text-white/50 bg-white/3 border border-white/8
+                                 rounded-xl hover:border-teal-500/30 hover:bg-teal-500/5 hover:text-white/70 transition-all leading-relaxed"
                     >
                       {prompt}
                     </button>
@@ -241,46 +327,42 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
               </div>
             ) : (
               messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={cn("flex gap-2.5", msg.role === "user" ? "justify-end" : "justify-start")}
-                >
+                <div key={msg.id} className={cn("flex gap-2", msg.role === "user" ? "justify-end" : "justify-start")}>
                   {msg.role === "assistant" && (
-                    <div className="shrink-0 w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center mt-0.5">
-                      <Bot className="w-4 h-4 text-white" />
+                    <div className="shrink-0 w-6 h-6 rounded-full bg-teal-500 flex items-center justify-center mt-0.5">
+                      <Bot className="w-3.5 h-3.5 text-white" />
                     </div>
                   )}
-                  <div
-                    className={cn(
-                      "max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-                      msg.role === "user"
-                        ? "bg-blue-600 text-white rounded-tr-sm"
-                        : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm shadow-sm"
-                    )}
-                  >
-                    <div className="whitespace-pre-wrap">{msg.content}</div>
-                    <div className={cn("text-xs mt-1.5", msg.role === "user" ? "text-blue-200 text-right" : "text-slate-400")}>
+                  <div className={cn(
+                    "max-w-[82%] rounded-2xl px-3 py-2.5 text-xs leading-relaxed",
+                    msg.role === "user"
+                      ? "bg-teal-600 text-white rounded-tr-sm"
+                      : "bg-white/5 border border-white/10 text-white/80 rounded-tl-sm"
+                  )}>
+                    <div className="whitespace-pre-wrap">{msg.content.slice(0, 300)}{msg.content.length > 300 ? "..." : ""}</div>
+                    <div className={cn("text-xs mt-1 opacity-60", msg.role === "user" ? "text-right" : "")}>
                       {formatTime(msg.createdAt)}
                     </div>
                   </div>
                   {msg.role === "user" && (
-                    <div className="shrink-0 w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center mt-0.5">
-                      <User className="w-4 h-4 text-slate-600" />
+                    <div className="shrink-0 w-6 h-6 rounded-full bg-white/10 flex items-center justify-center mt-0.5">
+                      <User className="w-3.5 h-3.5 text-white/60" />
                     </div>
                   )}
                 </div>
               ))
             )}
             {loading && (
-              <div className="flex gap-2.5">
-                <div className="shrink-0 w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center">
-                  <Bot className="w-4 h-4 text-white" />
+              <div className="flex gap-2">
+                <div className="shrink-0 w-6 h-6 rounded-full bg-teal-500 flex items-center justify-center">
+                  <Bot className="w-3.5 h-3.5 text-white" />
                 </div>
-                <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                <div className="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm px-4 py-3">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:0ms]" />
-                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" />
-                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" />
+                    {[0, 150, 300].map((d) => (
+                      <div key={d} className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-bounce"
+                        style={{ animationDelay: `${d}ms` }} />
+                    ))}
                   </div>
                 </div>
               </div>
@@ -288,26 +370,30 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
             <div ref={chatEndRef} />
           </div>
 
-          {/* 입력 영역 */}
-          <div className="shrink-0 p-4 border-t border-slate-200 bg-white">
+          {/* 입력창 */}
+          <div className="shrink-0 p-3 border-t border-white/8 bg-[#0A0F1E]/40">
             <div className="flex gap-2 items-end">
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(input); }
+                }}
                 placeholder="발명 내용을 입력하세요... (Enter: 전송 / Shift+Enter: 줄바꿈)"
                 rows={3}
-                className="flex-1 px-3 py-2.5 text-sm border border-slate-200 rounded-xl resize-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 outline-none bg-white leading-relaxed"
                 disabled={loading}
+                className="flex-1 px-3 py-2.5 text-xs border border-white/10 bg-white/5 rounded-xl resize-none
+                           text-white/80 placeholder:text-white/25
+                           focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500/40 outline-none transition-all"
               />
               <button
                 onClick={() => void sendMessage(input)}
                 disabled={!input.trim() || loading}
                 className={cn(
-                  "shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                  "shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all",
                   input.trim() && !loading
-                    ? "bg-blue-600 hover:bg-blue-700 text-white"
-                    : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                    ? "bg-teal-500 hover:bg-teal-600 text-white shadow-md shadow-teal-500/20"
+                    : "bg-white/5 text-white/20 cursor-not-allowed"
                 )}
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
@@ -317,43 +403,37 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
         </div>
       )}
 
-      {/* ===== 오른쪽: 편집기 패널 ===== */}
+      {/* ════════════════════════════════════════
+          오른쪽: HWP 스타일 리치 에디터
+      ════════════════════════════════════════ */}
       {!leftExpanded && (
-        <div
-          className={cn(
-            "flex flex-col min-h-0 bg-white transition-all",
-            rightExpanded ? "w-full" : "w-1/2"
-          )}
-        >
-          {/* 편집기 헤더 */}
-          <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+        <div className={cn("flex flex-col min-h-0 transition-all", rightExpanded ? "w-full" : "flex-1")}>
+
+          {/* ── 편집기 헤더 (타이틀바) ── */}
+          <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-white/8 bg-[#1E293B]/80">
             <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-emerald-600" />
-              <span className="text-sm font-bold text-slate-800">명세서 편집기</span>
-              {editorContent && (
-                <span className="text-xs text-slate-400">{editorContent.length.toLocaleString()}자</span>
+              <FileText className="w-4 h-4 text-teal-400" />
+              <span className="text-sm font-bold text-white/90">명세서 편집기</span>
+              {hasContent && (
+                <span className="text-xs text-white/30 hidden sm:inline">
+                  {charCount.toLocaleString()}자 · {lineCount}줄
+                </span>
               )}
             </div>
             <div className="flex items-center gap-1">
               {messages.some((m) => m.role === "assistant") && (
-                <button
-                  onClick={useLastResponse}
-                  className="flex items-center gap-1 px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
-                  title="마지막 AI 응답 가져오기"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
+                <button onClick={useLastResponse}
+                  className="flex items-center gap-1 px-2 py-1.5 text-xs text-white/50 hover:text-white/80 hover:bg-white/8 rounded-lg transition-all">
+                  <RotateCcw className="w-3 h-3" />
                   <span className="hidden sm:inline">최신 응답</span>
                 </button>
               )}
-              <button
-                onClick={handleCopy}
-                disabled={!editorContent.trim()}
+              <button onClick={handleCopy} disabled={!hasContent}
                 className={cn(
-                  "flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg transition-colors",
-                  editorContent.trim() ? "text-slate-600 hover:bg-slate-200" : "text-slate-300 cursor-not-allowed"
-                )}
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  "flex items-center gap-1 px-2 py-1.5 text-xs rounded-lg transition-all",
+                  hasContent ? "text-white/50 hover:text-white/80 hover:bg-white/8" : "text-white/20 cursor-not-allowed"
+                )}>
+                {copied ? <Check className="w-3 h-3 text-teal-400" /> : <Copy className="w-3 h-3" />}
                 {copied ? "복사됨" : "복사"}
               </button>
 
@@ -361,73 +441,183 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
               <div className="relative" ref={downloadMenuRef}>
                 <button
                   onClick={() => setDownloadMenuOpen(!downloadMenuOpen)}
-                  disabled={!editorContent.trim() || downloading !== null}
+                  disabled={!hasContent || downloading !== null}
                   className={cn(
-                    "flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg transition-colors font-medium",
-                    editorContent.trim() && downloading === null
-                      ? "bg-blue-600 text-white hover:bg-blue-700"
-                      : "bg-slate-100 text-slate-400 cursor-not-allowed"
-                  )}
-                >
-                  {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                  {downloading ? "처리 중..." : "다운로드"}
-                  {!downloading && <ChevronDown className="w-3 h-3" />}
+                    "flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg font-semibold transition-all",
+                    hasContent && !downloading
+                      ? "bg-teal-500 hover:bg-teal-600 text-white shadow-md shadow-teal-500/20"
+                      : "bg-white/5 text-white/25 cursor-not-allowed"
+                  )}>
+                  {downloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                  {downloading ? "처리중..." : "다운로드"}
+                  {!downloading && <ChevronDown className="w-2.5 h-2.5" />}
                 </button>
 
                 {downloadMenuOpen && (
-                  <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-lg z-50 overflow-hidden">
-                    <button
-                      onClick={handleDownloadDocx}
-                      className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                    >
-                      <FileDown className="w-4 h-4 text-blue-600" />
-                      <div className="text-left">
-                        <div className="font-medium">Word (.docx)</div>
-                        <div className="text-xs text-slate-500">Microsoft Word 형식</div>
-                      </div>
-                    </button>
-                    <div className="border-t border-slate-100" />
-                    <button
-                      onClick={handleDownloadHwpx}
-                      className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                    >
-                      <FileDown className="w-4 h-4 text-emerald-600" />
-                      <div className="text-left">
-                        <div className="font-medium">한글 (.hwpx)</div>
-                        <div className="text-xs text-slate-500">한컴 한글 형식</div>
-                      </div>
-                    </button>
+                  <div className="absolute right-0 top-full mt-1 w-52 bg-[#1E293B] border border-white/15 rounded-xl shadow-2xl z-50 overflow-hidden">
+                    {(Object.entries(FORMAT_LABELS) as [DownloadFormat, typeof FORMAT_LABELS[DownloadFormat]][]).map(([fmt, info]) => (
+                      <button
+                        key={fmt}
+                        onClick={() => void handleDownload(fmt)}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/8 transition-colors border-b border-white/5 last:border-0"
+                      >
+                        <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", info.color.replace("text-", "bg-"))} />
+                        <div className="text-left">
+                          <div className={cn("font-medium text-xs", info.color)}>{info.label}</div>
+                          <div className="text-xs text-white/30">{info.sub}</div>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
 
               <button
                 onClick={() => { setRightExpanded(!rightExpanded); setLeftExpanded(false); }}
-                className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors text-slate-400 hover:text-slate-600"
-                title={rightExpanded ? "패널 축소" : "패널 확장"}
-              >
-                {rightExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/70 transition-all">
+                {rightExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
 
-          {/* 편집기 본문 */}
-          <div className="flex-1 relative">
-            <textarea
-              value={editorContent}
-              onChange={(e) => setEditorContent(e.target.value)}
-              placeholder={`AI가 생성한 특허 명세서가 여기에 표시됩니다.\n\n왼쪽 채팅창에서 발명 내용을 입력하면 자동으로 채워집니다.\n직접 편집도 가능합니다.\n\n편집 후 Word(.docx) 또는 한글(.hwpx) 파일로 다운로드하세요.`}
-              className="absolute inset-0 w-full h-full px-5 py-4 text-sm text-slate-800 bg-white resize-none outline-none leading-relaxed font-mono border-0 focus:ring-0"
+          {/* ── HWP 스타일 툴바 ── */}
+          <div className="shrink-0 border-b border-white/8 bg-[#1A2540] px-2 py-1.5">
+            {/* 툴바 행 1: 단락 스타일 + 폰트 크기 + 기본 서식 */}
+            <div className="flex items-center gap-1 flex-wrap">
+              {/* 단락 스타일 */}
+              <select
+                value={paraStyle}
+                onChange={(e) => applyParaStyle(e.target.value)}
+                className="h-7 px-2 text-xs bg-white/5 border border-white/10 rounded-lg text-white/70
+                           focus:outline-none focus:ring-1 focus:ring-teal-500/40 mr-1"
+              >
+                {PARA_STYLES.map((s) => (
+                  <option key={s.tag} value={s.tag} style={{ background: "#1e293b" }}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+
+              {/* 폰트 크기 */}
+              <div className="flex items-center gap-0.5 mr-1">
+                <Type className="w-3 h-3 text-white/30" />
+                <select
+                  value={fontSize}
+                  onChange={(e) => { setFontSize(e.target.value); document.execCommand("fontSize", false, e.target.value); }}
+                  className="h-7 px-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white/70
+                             focus:outline-none focus:ring-1 focus:ring-teal-500/40"
+                >
+                  {["1","2","3","4","5","6","7"].map((s) => (
+                    <option key={s} value={s} style={{ background: "#1e293b" }}>
+                      {["8","10","12","14","18","24","36"][+s-1]}pt
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="w-px h-5 bg-white/10 mx-0.5" />
+
+              {/* 텍스트 서식 */}
+              <ToolbarBtn icon={Bold} label="굵게 (Ctrl+B)" cmd="bold" />
+              <ToolbarBtn icon={Italic} label="기울임 (Ctrl+I)" cmd="italic" />
+              <ToolbarBtn icon={Underline} label="밑줄 (Ctrl+U)" cmd="underline" />
+              <ToolbarBtn icon={Strikethrough} label="취소선" cmd="strikeThrough" />
+
+              <div className="w-px h-5 bg-white/10 mx-0.5" />
+
+              {/* 정렬 */}
+              <ToolbarBtn icon={AlignLeft} label="왼쪽 정렬" cmd="justifyLeft" />
+              <ToolbarBtn icon={AlignCenter} label="가운데 정렬" cmd="justifyCenter" />
+              <ToolbarBtn icon={AlignRight} label="오른쪽 정렬" cmd="justifyRight" />
+              <ToolbarBtn icon={AlignJustify} label="양쪽 정렬" cmd="justifyFull" />
+
+              <div className="w-px h-5 bg-white/10 mx-0.5" />
+
+              {/* 목록 */}
+              <ToolbarBtn icon={List} label="글머리 목록" cmd="insertUnorderedList" />
+              <ToolbarBtn icon={ListOrdered} label="번호 목록" cmd="insertOrderedList" />
+              <ToolbarBtn icon={Minus} label="가로 구분선" cmd="insertHorizontalRule" />
+
+              <div className="w-px h-5 bg-white/10 mx-0.5" />
+
+              {/* 특허 전용 삽입 버튼 */}
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  document.execCommand("insertText", false, "【청구항 1】");
+                }}
+                title="청구항 마커 삽입"
+                className="flex items-center gap-1 px-2 h-7 rounded-md text-xs font-medium text-white/50
+                           hover:text-white/90 hover:bg-white/10 border border-white/10 transition-all"
+              >
+                청구항
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  document.execCommand("insertText", false, "【발명의 설명】");
+                }}
+                title="발명의 설명 마커 삽입"
+                className="flex items-center gap-1 px-2 h-7 rounded-md text-xs font-medium text-white/50
+                           hover:text-white/90 hover:bg-white/10 border border-white/10 transition-all"
+              >
+                발명설명
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  document.execCommand("insertText", false, "【요약서】");
+                }}
+                title="요약서 마커 삽입"
+                className="flex items-center gap-1 px-2 h-7 rounded-md text-xs font-medium text-white/50
+                           hover:text-white/90 hover:bg-white/10 border border-white/10 transition-all"
+              >
+                요약
+              </button>
+            </div>
+          </div>
+
+          {/* ── 에디터 본문 (A4 paper 스타일) ── */}
+          <div className="flex-1 overflow-y-auto bg-[#1C2438] flex justify-center py-6 px-4">
+            {/* A4 종이 시뮬레이션 */}
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={updateStats}
+              data-placeholder="AI가 생성한 특허 명세서가 여기에 표시됩니다.&#10;&#10;왼쪽 채팅창에서 발명 내용을 입력하면 자동으로 채워집니다.&#10;직접 편집도 가능하며, 한글편집기처럼 서식 버튼을 사용할 수 있습니다.&#10;&#10;편집 후 Word · HWPX · HTML · Markdown · TXT 파일로 다운로드하세요."
+              className={cn(
+                "w-full max-w-3xl bg-white text-gray-900 shadow-2xl",
+                "min-h-[800px] px-16 py-14 outline-none focus:outline-none",
+                "text-sm leading-8 rounded-sm",
+                "[&_h1]:text-2xl [&_h1]:font-bold [&_h1]:mt-6 [&_h1]:mb-3 [&_h1]:text-gray-900 [&_h1]:border-b [&_h1]:border-gray-200 [&_h1]:pb-2",
+                "[&_h2]:text-xl [&_h2]:font-bold [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-gray-800",
+                "[&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:text-gray-800",
+                "[&_h4]:text-base [&_h4]:font-semibold [&_h4]:mt-3 [&_h4]:mb-1 [&_h4]:text-gray-700",
+                "[&_p]:mb-3 [&_p]:text-justify",
+                "[&_ul]:list-disc [&_ul]:pl-6 [&_ul]:mb-3",
+                "[&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:mb-3",
+                "[&_li]:mb-1",
+                "[&_hr]:border-gray-300 [&_hr]:my-4",
+                "[&_strong]:font-bold",
+                "[&_em]:italic",
+              )}
+              style={{
+                fontFamily: "'맑은 고딕', 'Malgun Gothic', 'Noto Sans KR', sans-serif",
+                fontSize: "11pt",
+              }}
             />
           </div>
 
-          {/* 편집기 하단 */}
-          {editorContent && (
-            <div className="shrink-0 px-4 py-2 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs text-slate-400">
-              <span>직접 편집 가능 · 편집 후 다운로드</span>
-              <span>{editorContent.split("\n").length}줄 · {editorContent.length.toLocaleString()}자</span>
-            </div>
-          )}
+          {/* ── 상태바 ── */}
+          <div className="shrink-0 px-4 py-1.5 border-t border-white/8 bg-[#0F172A]/60
+                          flex items-center justify-between text-xs text-white/25">
+            <span>직접 편집 · 서식 툴바 지원 · 다운로드 5종</span>
+            <span>{charCount.toLocaleString()}자 · {wordCount.toLocaleString()}단어 · {lineCount}줄</span>
+          </div>
         </div>
       )}
     </div>
