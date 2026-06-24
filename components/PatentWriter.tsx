@@ -95,6 +95,16 @@ function ToolbarBtn({
   );
 }
 
+/* ─── AI 프로바이더 설정 ─── */
+type AIProvider = "auto" | "gpt" | "gemini" | "deepseek";
+
+const PROVIDERS: { value: AIProvider; label: string; color: string; badge: string }[] = [
+  { value: "auto",     label: "Auto (자동)",        color: "text-teal-400",   badge: "bg-teal-500/20 text-teal-300 border-teal-500/30" },
+  { value: "gpt",      label: "GPT-4o mini",        color: "text-green-400",  badge: "bg-green-500/20 text-green-300 border-green-500/30" },
+  { value: "gemini",   label: "Gemini 2.0 Flash",   color: "text-blue-400",   badge: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
+  { value: "deepseek", label: "DeepSeek",           color: "text-purple-400", badge: "bg-purple-500/20 text-purple-300 border-purple-500/30" },
+];
+
 /* ─── 메인 컴포넌트 ─── */
 interface PatentWriterProps {
   geminiApiKey?: string;
@@ -114,21 +124,28 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
   const [lineCount, setLineCount] = useState(0);
   const [paraStyle, setParaStyle] = useState("p");
   const [fontSize, setFontSize] = useState("3");
+  const [provider, setProvider] = useState<AIProvider>("auto");
+  const [providerMenuOpen, setProviderMenuOpen] = useState(false);
+  const [usedProvider, setUsedProvider] = useState<string>("");
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
+  const providerMenuRef = useRef<HTMLDivElement>(null);
 
   /* 스크롤 */
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  /* 다운로드 메뉴 외부 클릭 닫기 */
+  /* 메뉴 외부 클릭 닫기 */
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (downloadMenuRef.current && !downloadMenuRef.current.contains(e.target as Node)) {
         setDownloadMenuOpen(false);
+      }
+      if (providerMenuRef.current && !providerMenuRef.current.contains(e.target as Node)) {
+        setProviderMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -160,16 +177,19 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
-          apiKey: geminiApiKey,
+          provider,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error((data as { error?: string }).error ?? "응답 오류");
 
+      const responseData = data as { text: string; provider?: string };
+      if (responseData.provider) setUsedProvider(responseData.provider);
+
       const assistantMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: (data as { text: string }).text,
+        content: responseData.text,
         createdAt: new Date(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
@@ -279,13 +299,51 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
                 <Bot className="w-4 h-4 text-white" />
               </div>
               <div>
-                <p className="text-sm font-bold text-white/90">Gemini 특허 AI</p>
-                <p className="text-xs text-white/40">특허 명세서 작성 전문 AI</p>
+                <p className="text-sm font-bold text-white/90">특허 AI 어시스턴트</p>
+                <p className="text-xs text-white/40">
+                  {usedProvider ? `마지막 응답: ${usedProvider}` : "특허 명세서 작성 전문 AI"}
+                </p>
               </div>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
+              {/* 모델 선택 드롭다운 */}
+              <div className="relative" ref={providerMenuRef}>
+                <button
+                  onClick={() => setProviderMenuOpen(!providerMenuOpen)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all",
+                    PROVIDERS.find(p => p.value === provider)?.badge ?? "",
+                    "hover:opacity-80"
+                  )}
+                >
+                  <span>{PROVIDERS.find(p => p.value === provider)?.label}</span>
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+                {providerMenuOpen && (
+                  <div className="absolute right-0 top-full mt-1 z-50 w-48 bg-[#1A2540] border border-white/10 rounded-xl shadow-xl overflow-hidden">
+                    {PROVIDERS.map((p) => (
+                      <button
+                        key={p.value}
+                        onClick={() => { setProvider(p.value); setProviderMenuOpen(false); }}
+                        className={cn(
+                          "w-full flex items-center gap-2 px-3 py-2 text-xs transition-all hover:bg-white/8",
+                          provider === p.value ? "bg-white/5" : ""
+                        )}
+                      >
+                        <span className={cn("w-1.5 h-1.5 rounded-full", p.value === "auto" ? "bg-teal-400" : p.value === "gpt" ? "bg-green-400" : p.value === "gemini" ? "bg-blue-400" : "bg-purple-400")} />
+                        <span className={provider === p.value ? p.color : "text-white/60"}>{p.label}</span>
+                        {provider === p.value && <Check className="w-3 h-3 ml-auto text-white/40" />}
+                      </button>
+                    ))}
+                    <div className="px-3 py-2 border-t border-white/8 text-[10px] text-white/30">
+                      Auto: GPT → Gemini → DeepSeek 순 자동 선택
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {messages.length > 0 && (
-                <button onClick={() => setMessages([])}
+                <button onClick={() => { setMessages([]); setUsedProvider(""); }}
                   className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/70 transition-all"
                   title="대화 초기화">
                   <Trash2 className="w-3.5 h-3.5" />
