@@ -6,8 +6,9 @@ import {
   ChevronDown, Trash2, RotateCcw, Maximize2, Minimize2,
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
-  List, ListOrdered, Minus, Type,
+  List, ListOrdered, Minus, Type, Paperclip, X, FileUp,
 } from "lucide-react";
+import { parseFile, formatFileSize, ACCEPTED_EXTENSIONS, type ParsedFile } from "@/lib/fileParser";
 import { cn } from "@/lib/cn";
 
 /* ─── 타입 ─── */
@@ -127,6 +128,9 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
   const [provider, setProvider] = useState<AIProvider>("auto");
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [usedProvider, setUsedProvider] = useState<string>("");
+  const [attachedFiles, setAttachedFiles] = useState<ParsedFile[]>([]);
+  const [fileLoading, setFileLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -161,24 +165,64 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
     setLineCount(text.split("\n").length);
   }, []);
 
+  /* 파일 업로드 핸들러 */
+  const handleFileUpload = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setFileLoading(true);
+    try {
+      const parsed = await Promise.all(Array.from(files).map(parseFile));
+      setAttachedFiles((prev) => [...prev, ...parsed]);
+    } finally {
+      setFileLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, []);
+
+  /* 파일 제거 */
+  const removeFile = useCallback((idx: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
+
   /* AI 메시지 전송 */
   const sendMessage = useCallback(async (userInput: string) => {
     const trimmed = userInput.trim();
-    if (!trimmed || loading) return;
+    if ((!trimmed && attachedFiles.length === 0) || loading) return;
 
-    const userMsg: Message = { id: Date.now().toString(), role: "user", content: trimmed, createdAt: new Date() };
+    // 첨부 파일 내용을 메시지에 합산
+    let fullContent = trimmed;
+    if (attachedFiles.length > 0) {
+      const fileContext = attachedFiles
+        .map((f) => `--- 첨부 파일: ${f.name} ---\n${f.text}`)
+        .join("\n\n");
+      fullContent = fullContent
+        ? `${fullContent}\n\n[첨부 파일 내용]\n${fileContext}`
+        : `[첨부 파일 분석 요청]\n\n${fileContext}\n\n위 파일 내용을 바탕으로 특허 명세서 작성을 도와주세요.`;
+    }
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: attachedFiles.length > 0
+        ? `${trimmed || "(파일 첨부)"}${attachedFiles.map((f) => ` 📎 ${f.name}`).join("")}`
+        : trimmed,
+      createdAt: new Date(),
+    };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    setAttachedFiles([]);
     setLoading(true);
 
     try {
+      // API에 전달할 메시지는 fullContent(파일 내용 포함)를 사용
+      const apiMessages = [
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user" as const, content: fullContent },
+      ];
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
-          provider,
-        }),
+        body: JSON.stringify({ messages: apiMessages, provider }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error((data as { error?: string }).error ?? "응답 오류");
@@ -429,15 +473,63 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
           </div>
 
           {/* 입력창 */}
-          <div className="shrink-0 p-3 border-t border-white/8 bg-[#0A0F1E]/40">
-            <div className="flex gap-2 items-end">
+          <div className="shrink-0 border-t border-white/8 bg-[#0A0F1E]/40">
+            {/* 첨부 파일 미리보기 */}
+            {attachedFiles.length > 0 && (
+              <div className="px-3 pt-2.5 flex flex-wrap gap-1.5">
+                {attachedFiles.map((f, i) => (
+                  <div key={i} className="flex items-center gap-1.5 px-2 py-1 bg-teal-500/10 border border-teal-500/25 rounded-lg text-xs text-teal-300 max-w-[180px]">
+                    <FileText className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{f.name}</span>
+                    <span className="text-teal-500/60 shrink-0">{formatFileSize(f.size)}</span>
+                    <button onClick={() => removeFile(i)} className="shrink-0 text-teal-500/60 hover:text-red-400 transition-colors ml-0.5">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2 items-end p-3">
+              {/* 파일 업로드 버튼 */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ACCEPTED_EXTENSIONS}
+                className="hidden"
+                onChange={(e) => void handleFileUpload(e.target.files)}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading || fileLoading}
+                title="파일 첨부 (TXT, PDF, DOCX, MD, HWP)"
+                className={cn(
+                  "shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all border",
+                  fileLoading
+                    ? "border-teal-500/40 bg-teal-500/10 text-teal-400"
+                    : attachedFiles.length > 0
+                    ? "border-teal-500/40 bg-teal-500/15 text-teal-400"
+                    : "border-white/10 bg-white/5 text-white/30 hover:text-white/70 hover:border-white/20 hover:bg-white/8"
+                )}
+              >
+                {fileLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+              </button>
+
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(input); }
                 }}
-                placeholder="발명 내용을 입력하세요... (Enter: 전송 / Shift+Enter: 줄바꿈)"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  void handleFileUpload(e.dataTransfer.files);
+                }}
+                placeholder={attachedFiles.length > 0
+                  ? "파일에 대한 추가 지시사항을 입력하세요... (비워두면 자동 분석)"
+                  : "발명 내용 입력 또는 파일을 드래그&드롭... (Enter: 전송)"}
                 rows={3}
                 disabled={loading}
                 className="flex-1 px-3 py-2.5 text-xs border border-white/10 bg-white/5 rounded-xl resize-none
@@ -446,16 +538,22 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
               />
               <button
                 onClick={() => void sendMessage(input)}
-                disabled={!input.trim() || loading}
+                disabled={(!input.trim() && attachedFiles.length === 0) || loading}
                 className={cn(
-                  "shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all",
-                  input.trim() && !loading
+                  "shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all",
+                  (input.trim() || attachedFiles.length > 0) && !loading
                     ? "bg-teal-500 hover:bg-teal-600 text-white shadow-md shadow-teal-500/20"
                     : "bg-white/5 text-white/20 cursor-not-allowed"
                 )}
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               </button>
+            </div>
+
+            {/* 지원 파일 형식 안내 */}
+            <div className="px-3 pb-2 flex items-center gap-1.5 text-[10px] text-white/20">
+              <FileUp className="w-2.5 h-2.5" />
+              <span>TXT · PDF · DOCX · MD · HWP 지원 · 드래그&드롭 가능</span>
             </div>
           </div>
         </div>
