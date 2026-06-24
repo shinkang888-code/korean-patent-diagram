@@ -224,23 +224,34 @@ export default function PatentWriter({ geminiApiKey }: PatentWriterProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: apiMessages, provider }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error((data as { error?: string }).error ?? "응답 오류");
 
-      const responseData = data as { text: string; provider?: string };
-      if (responseData.provider) setUsedProvider(responseData.provider);
+      // 응답이 JSON이 아닐 경우를 안전하게 처리
+      let data: { text?: string; error?: string; provider?: string } = {};
+      const contentType = res.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const rawText = await res.text();
+        if (!res.ok) throw new Error(`서버 오류 (${res.status}): ${rawText.slice(0, 200)}`);
+        data = { text: rawText };
+      }
+
+      if (!res.ok) throw new Error(data.error ?? `응답 오류 (${res.status})`);
+      if (!data.text) throw new Error("AI 응답이 비어있습니다.");
+
+      if (data.provider) setUsedProvider(data.provider);
 
       const assistantMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: responseData.text,
+        content: data.text,
         createdAt: new Date(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
       /* 에디터에 HTML 삽입 */
       if (editorRef.current) {
-        editorRef.current.innerHTML = markdownToEditorHtml((data as { text: string }).text);
+        editorRef.current.innerHTML = markdownToEditorHtml(data.text);
         updateStats();
       }
     } catch (err) {

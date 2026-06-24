@@ -188,8 +188,15 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ text, provider: usedProvider });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "서버 오류";
+    const msg = err instanceof Error ? err.message : String(err) || "서버 오류";
     console.error("[Chat API Error]", err);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    // 항상 JSON으로 반환
+    return NextResponse.json(
+      { error: msg.slice(0, 500) },
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 }
